@@ -6,7 +6,7 @@ from src.models.user import User
 from src.models.source import Source
 from src.models.record import Record
 from src.models.run import Run
-from src.models import note,audit
+from src.models import note,audit,visit
 from src.utils.security import hash_password
 from src.utils.serialization import now
 from src.services.runs import queue
@@ -38,6 +38,8 @@ def seed():
         for role in ('admin','analyst','viewer'):
             email=role+'@'+CONFIG['slug']+'.demo'
             if not db.scalar(select(User).where(User.email==email)):db.add(User(email=email,password_hash=hash_password('Research2026!'),role=role))
+        for day,capacity in (('2026-11-20',6),('2026-11-21',6)):
+            if not db.get(visit.VisitDayQuota,day):db.add(visit.VisitDayQuota(day=day,capacity=capacity))
         for batch in range(3):
             key=CONFIG['code']+f'-202611-{batch+1:02}'
             source=db.scalar(select(Source).where(Source.key==key))

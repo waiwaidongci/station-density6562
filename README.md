@@ -12,8 +12,9 @@
 2. 巡测专题：创建/修改来源说明、查看样本、用真实业务字段追加记录；列表分页。
 3. 分析配置：冻结来源、参数和全部样本，进入Redis队列。
 4. 完整结果：真实算法摘要、专属诊断、全部CSV导出和可恢复失败态。
-5. 复访计划：分析师草案→负责人批准→阅读者下载批准快照。
-6. 审计：登录、来源修改、任务worker完成、业务说明批准等事件。
+5. 复访名单与名额：在结果页按分区/噪声组填写抽样数与站点可访日，生成最小标准化距离名单并占用每日名额；名额不足时整单不占位。
+6. 复访计划：分析师草案→负责人批准→阅读者下载批准快照。
+7. 审计：登录、来源修改、任务worker完成、业务说明批准、名额维护与名单占位等事件。
 
 ## 快速启动
 
@@ -53,9 +54,9 @@ JWT有效期8小时；PBKDF2盐化哈希保存密码；角色每请求从数据�
 
 ## 实体与字段
 
-Survey / StationReading / DensityRun / VisitPlan 是核心实体；另有User和Audit。数据库实际表：`surveys` → `station_readings` → `density_runs` → `visit_plans`。样本以固定字段JSON保存，后端按以下字段严格验证，不接受未知字段替代必填值：温度 ℃（`temperature`）、相对湿度 %（`humidity`）、颗粒浓度 μg/m³（`particles`）。
+Survey / StationReading / DensityRun / VisitPlan 是核心实体；复访抽样另用 `visit_day_quotas`、`visit_rosters`、`visit_roster_items` 与 `visit_reservation_locks`；另有User和Audit。数据库实际表：`surveys` → `station_readings` → `density_runs` → `visit_plans`。样本以固定字段JSON保存，后端按以下字段严格验证，不接受未知字段替代必填值：温度 ℃（`temperature`）、相对湿度 %（`humidity`）、颗粒浓度 μg/m³（`particles`）。
 
-实体贯穿 `backend/src/models`、`schemas`、`services`、`controllers`、`routes`，以及 `frontend/src/api/research.js`、`stores/research.js` 和 `pages`。`Source.key` 与 `(Record.source_id, reference)` 为自然键；来源改名不会修改已冻结任务输入。业务说明在创建时保存结果快照，批准后从该快照导出。
+实体贯穿 `backend/src/models`、`schemas`、`services`、`controllers`、`routes`，以及 `frontend/src/api/research.js`、`stores/research.js` 和 `pages`；复访抽样实现在 `models/visit.py`、`schemas/visit.py`、`services/visit.py`、`services/visit_sampling.py`、`routes/visit.py` 与 `pages/visit.js`。`Source.key` 与 `(Record.source_id, reference)` 为自然键；来源改名不会修改已冻结任务输入。业务说明在创建时保存结果快照，批准后从该快照导出。
 
 ## 算法与口径
 
@@ -70,9 +71,17 @@ Survey / StationReading / DensityRun / VisitPlan 是核心实体；另有User和
 
 已知边界：只在温度/湿度/颗粒三个标准化特征上做密度分区；不是地理显著性、风险诊断或自动污染识别。eps敏感，分区编号没有大小顺序；含常量列明确拒绝。
 
+## 复访抽样与名额
+
+从已完成研究的结果页发起：按分区编号与噪声组分别填写抽样数，并可逐站填写可访日（`reference=YYYY-MM-DD` 列表）；未列出的站点视为全部可访日。到组中心的距离使用该任务冻结的标准化均值与尺度，在原始量纲上计算。噪声组取全部噪声行的逐特征均值作为组中心。
+
+求解使用最小费用流：每个站至多入选一次、每个分区恰好达到抽样数、每日占位不超过剩余名额；在满足这些约束的可行组合中，使入选站到各自组中心标准化距离之和最小。若无法满足（例如剩余名额不足或可访日不足），整张名单拒绝写入并返回缺额说明，不占用任何名额。
+
+每日名额由负责人维护（`PUT /api/visit-quotas`，不可低于当天已占位数），所有研究共用；`GET /api/visit-quotas` 返回已用与剩余。抽样建议数按各组站点规模等比分配（`GET /api/visit-suggest?run_id=&total=`）。名单与占位在同一事务中生效；`request_key` 幂等，重试同一请求返回原名单且不重复占位；同一 `request_key` 搭配不同输入返回409。名单可导出CSV（`GET /api/visit-rosters/{id}/export`）。
+
 ## 演示数据与一天剧本
 
-固定seed=42，3个来源 ` HL-202611-01/02/03`，每来源240条，共720条业务记录；三个账号和首轮种子任务。自然键检查后仅插入缺失数据，连跑seed不重复、不覆盖用户修改。`SEED_DEMO=true` 时启动自动执行；失败记录日志但不阻塞服务。首轮任务同样由独立worker真实计算。
+固定seed=42，3个来源 ` HL-202611-01/02/03`，每来源240条，共720条业务记录；三个账号、首轮种子任务，以及 `2026-11-20`/`2026-11-21` 各 6 个每日名额。自然键检查后仅插入缺失数据，连跑seed不重复、不覆盖用户修改。`SEED_DEMO=true` 时启动自动执行；失败记录日志但不阻塞服务。首轮任务同样由独立worker真实计算。
 
 1. 09:00 负责人查看三份来源和720条样本。
 2. 09:10 分析师选择 `HL-202611-01 秋季常规组`，核对 `station-density-202611-01.csv`。
@@ -82,6 +91,7 @@ Survey / StationReading / DensityRun / VisitPlan 是核心实体；另有User和
 6. 09:25 分析师查看专属诊断及逐行结果，并下载CSV复算。
 7. 09:30 提交“十一月业务复核意见”，负责人核对并批准。
 8. 09:40 viewer下载批准快照，查看审计中的worker完成与批准事件。
+9. 09:45 负责人在完整结果页按分区填写抽样数（含噪声组）与可访日，生成复访名单并占用每日名额；分析师查看名单、重试不重复占位，名额不足时整单不占位。
 
 ## 目录与本地开发
 

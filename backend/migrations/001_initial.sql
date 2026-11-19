@@ -1,3 +1,5 @@
 -- SQLAlchemy metadata initializes tables idempotently.
 -- Domain tables: surveys, station_readings, density_runs, visit_plans.
--- Unique natural keys: source.key; (record.source_id, record.reference).
+-- Visit sampling tables: visit_day_quotas, visit_rosters, visit_roster_items, visit_reservation_locks.
+-- Unique natural keys: source.key; (record.source_id, record.reference);
+--   visit_rosters.request_key; (visit_roster_items.roster_id, reference).
